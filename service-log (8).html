@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Log</title>
+<style>
+  :root {
+    --forest: #1C3A2B;
+    --moss: #3D6B4F;
+    --lime: #A8C547;
+    --sand: #F5F0E8;
+    --ink: #1A1A1A;
+    --mist: #E8EDE5;
+    --white: #FFFFFF;
+    --danger: #C0392B;
+    --radius: 8px;
+    --font: 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--sand); color: var(--ink); min-height: 100vh; }
+  header { background: var(--forest); color: var(--white); padding: 16px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  header h1 { font-size: 18px; font-weight: 700; }
+  header span { font-size: 12px; opacity: 0.6; margin-left: auto; }
+  .container { max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
+  .card { background: var(--white); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; border: 1px solid #DDD; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--moss); margin-bottom: 14px; }
+  label { font-size: 13px; font-weight: 600; color: #555; display: block; margin-bottom: 4px; }
+  input, select, textarea { width: 100%; padding: 10px 12px; border: 1.5px solid #DDD; border-radius: var(--radius); font-size: 15px; font-family: var(--font); background: var(--white); color: var(--ink); -webkit-appearance: none; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--moss); }
+  .form-row { margin-bottom: 14px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn-primary { background: var(--forest); color: var(--white); border: none; border-radius: var(--radius); padding: 12px 20px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 4px; }
+  .btn-submit { background: var(--lime); color: var(--forest); border: none; border-radius: var(--radius); padding: 16px; font-size: 16px; font-weight: 700; cursor: pointer; width: 100%; }
+  .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+  .task-list { display: flex; flex-direction: column; gap: 10px; }
+  .task-item { background: var(--mist); border-radius: var(--radius); padding: 12px 14px; border: 1.5px solid transparent; }
+  .task-item.done { background: #EDF4E8; border-color: var(--lime); }
+  .task-header { display: flex; align-items: flex-start; gap: 10px; }
+  .task-checkbox { display: none; }
+  .task-check-label {
+    width: 26px; height: 26px; flex-shrink: 0; border: 2.5px solid #BBB;
+    border-radius: 6px; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; background: var(--white); transition: all 0.15s;
+    margin-top: 1px;
+  }
+  .task-check-label .checkmark { display: none; color: white; font-size: 16px; font-weight: 900; line-height: 1; }
+  .task-item.done .task-check-label { background: var(--moss); border-color: var(--moss); }
+  .task-item.done .task-check-label .checkmark { display: block; }
+  .task-name { font-size: 14px; font-weight: 500; line-height: 1.4; flex: 1; }
+  .task-meta { font-size: 11px; font-weight: 700; color: var(--moss); background: var(--white); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; margin-top: 2px; white-space: nowrap; }
+  .task-notes { margin-top: 10px; display: none; }
+  .task-notes textarea { font-size: 13px; padding: 8px 10px; resize: none; min-height: 60px; }
+  .badge { display: inline-block; background: var(--forest); color: var(--white); font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 20px; margin-left: 6px; }
+  .status { text-align: center; padding: 14px; border-radius: var(--radius); font-size: 14px; font-weight: 600; margin-top: 12px; display: none; }
+  .status.success { background: #EDF4E8; color: var(--moss); display: block; }
+  .status.error { background: #FDECEA; color: var(--danger); display: block; }
+  .status.loading { background: var(--mist); color: #555; display: block; }
+  .empty { text-align: center; padding: 30px 20px; color: #999; font-size: 14px; }
+  .info-box { background: #FFF8E7; border: 1px solid #F0D080; border-radius: var(--radius); padding: 12px 14px; font-size: 13px; color: #7A5C00; margin-bottom: 14px; }
+  .connected { font-size: 12px; color: var(--moss); font-weight: 600; margin-top: 8px; display: none; }
+  .last-info { font-size: 11px; color: #999; margin-top: 3px; }
+  .spinner { text-align: center; padding: 20px; color: #999; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+    <circle cx="14" cy="14" r="14" fill="#3D6B4F"/>
+    <path d="M8 14l4 4 8-8" stroke="#A8C547" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <h1>Service Log</h1>
+  <span id="today-date"></span>
+</header>
+
+<div class="container">
+
+  <div class="card">
+    <h2>⚙️ Settings</h2>
+    <div class="form-row">
+      <label>Airtable API Token</label>
+      <input type="password" id="api-token" placeholder="pat..." autocomplete="off"/>
+    </div>
+    <button class="btn-primary" onclick="saveSettings()">Save & connect</button>
+    <div class="connected" id="connected-msg">✓ Connected to Airtable</div>
+  </div>
+
+  <div class="card">
+    <h2>Machine & Hours</h2>
+    <div class="form-row">
+      <label>Machine</label>
+      <select id="machine-select" onchange="onMachineChange()">
+        <option value="">— Select machine —</option>
+      </select>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label>Current hours</label>
+        <input type="number" id="current-hours" placeholder="e.g. 545" min="0" oninput="onHoursChange()"/>
+      </div>
+      <div class="form-row">
+        <label>Employee</label>
+        <input type="text" id="employee" placeholder="Your name"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="tasks-section" style="display:none">
+    <h2>Tasks due <span class="badge" id="task-count">0</span></h2>
+    <div id="tasks-info"></div>
+    <div class="task-list" id="task-list"></div>
+  </div>
+
+  <div id="submit-section" style="display:none">
+    <button class="btn-submit" onclick="submitLog()">Save service log →</button>
+    <div class="status" id="status-msg"></div>
+  </div>
+
+</div>
+
+<script>
+const BASE_ID = 'app1gC8LgQdWBmppF';
+const TABLES = {
+  machines: 'tblaFD7hboVdc3mmv',
+  tasks: 'tblkRyWoxw2zsBkKj',
+  servicelog: 'tbl4fxhG6aKjT9Kks',
+  items: 'tblJwEzrVeHKfi6Y5'
+};
+
+let token = '';
+let allMachines = [];
+let allTasks = [];
+let dueTasks = [];
+let selectedMachine = null;
+let lastServiceHoursPerTask = {}; // taskId -> last machine hours when task was done
+
+document.getElementById('today-date').textContent = new Date().toLocaleDateString('en-GB');
+
+const savedToken = localStorage.getItem('at_token');
+if (savedToken) {
+  token = savedToken;
+  document.getElementById('api-token').value = savedToken;
+  loadMachines();
+}
+
+function saveSettings() {
+  const val = document.getElementById('api-token').value.trim();
+  if (!val) { alert('Please enter your API token.'); return; }
+  token = val;
+  localStorage.setItem('at_token', token);
+  loadMachines();
+}
+
+async function airtableFetch(table, params) {
+  params = params || '';
+  const url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + table + params;
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+  if (!res.ok) throw new Error('Airtable error: ' + res.status);
+  return res.json();
+}
+
+async function airtablePost(table, body) {
+  const url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + table;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error('Airtable error: ' + res.status);
+  return res.json();
+}
+
+async function airtablePatch(table, recordId, fields) {
+  const url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + table + '/' + recordId;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: fields })
+  });
+  if (!res.ok) throw new Error('Airtable error: ' + res.status);
+  return res.json();
+}
+
+async function loadMachines() {
+  try {
+    const data = await airtableFetch(TABLES.machines, '?fields%5B%5D=Name&fields%5B%5D=Hours');
+    allMachines = data.records;
+    const sel = document.getElementById('machine-select');
+    while (sel.options.length > 1) sel.remove(1);
+    allMachines.forEach(function(m) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.fields.Name || '(no name)';
+      sel.appendChild(opt);
+    });
+    document.getElementById('connected-msg').style.display = 'block';
+    await loadAllTasks();
+  } catch(e) {
+    alert('Could not connect to Airtable. Check your token.');
+  }
+}
+
+async function loadAllTasks() {
+  var all = [];
+  var offset = null;
+  do {
+    var params = '?fields%5B%5D=Tasks&fields%5B%5D=interval&fields%5B%5D=Cubic+meter&fields%5B%5D=Maskin';
+    if (offset) params += '&offset=' + offset;
+    var data = await airtableFetch(TABLES.tasks, params);
+    all = all.concat(data.records);
+    offset = data.offset || null;
+  } while (offset);
+  allTasks = all;
+}
+
+function onMachineChange() {
+  const id = document.getElementById('machine-select').value;
+  selectedMachine = null;
+  lastServiceHoursPerTask = {};
+  for (var i = 0; i < allMachines.length; i++) {
+    if (allMachines[i].id === id) { selectedMachine = allMachines[i]; break; }
+  }
+  document.getElementById('current-hours').value = '';
+  hideTasks();
+}
+
+function onHoursChange() {
+  const hours = parseFloat(document.getElementById('current-hours').value);
+  if (!selectedMachine || isNaN(hours)) { hideTasks(); return; }
+  loadTasksAndCalculate(hours);
+}
+
+function hideTasks() {
+  document.getElementById('tasks-section').style.display = 'none';
+  document.getElementById('submit-section').style.display = 'none';
+}
+
+async function loadTasksAndCalculate(currentHours) {
+  document.getElementById('tasks-section').style.display = 'block';
+  document.getElementById('task-list').innerHTML = '<div class="spinner">Loading tasks...</div>';
+  document.getElementById('tasks-info').innerHTML = '';
+  document.getElementById('task-count').textContent = '...';
+  document.getElementById('submit-section').style.display = 'none';
+
+  try {
+    // Get machine tasks
+    const machineId = selectedMachine.id;
+    const machineTasks = allTasks.filter(function(t) {
+      const maskin = t.fields['Maskin'];
+      return maskin && maskin.indexOf(machineId) !== -1;
+    });
+
+    // For each task, find the last time it was completed and at what machine hours
+    // Fetch all servicelogg items for this machine's tasks
+    lastServiceHoursPerTask = {};
+
+    // Get all completed service items for this machine, sorted by machine hours desc
+    // We fetch servicelogg records for this machine first
+    var logParams = '?fields%5B%5D=current+hours&fields%5B%5D=Maskiner+2.0';
+    var logData = await airtableFetch(TABLES.servicelog, logParams);
+    var machineLogIds = [];
+    logData.records.forEach(function(r) {
+      var linked = r.fields['Maskiner 2.0'];
+      if (linked && linked.indexOf(machineId) !== -1) {
+        machineLogIds.push({ id: r.id, hours: r.fields['current hours'] || 0 });
+      }
+    });
+
+    // For each task, find the highest machine hours where it was completed
+    if (machineLogIds.length > 0) {
+      var itemsAll = [];
+      var itemOffset = null;
+      do {
+        var iParams = '?fields%5B%5D=Task&fields%5B%5D=Servicelogg&fields%5B%5D=Machine+hours&fields%5B%5D=Completed';
+        if (itemOffset) iParams += '&offset=' + itemOffset;
+        var iData = await airtableFetch(TABLES.items, iParams);
+        itemsAll = itemsAll.concat(iData.records);
+        itemOffset = iData.offset || null;
+      } while (itemOffset);
+
+      // Build a map of logId -> machine hours
+      var logHoursMap = {};
+      machineLogIds.forEach(function(l) { logHoursMap[l.id] = l.hours; });
+
+      // For each item, if it belongs to this machine's logs, record the machine hours
+      itemsAll.forEach(function(item) {
+        var taskLinks = item.fields['Task'];
+        var logLinks = item.fields['Servicelogg'];
+        if (!taskLinks || !logLinks) return;
+        var logId = logLinks[0];
+        if (!logHoursMap.hasOwnProperty(logId)) return;
+        var machineHours = item.fields['Machine hours'] || logHoursMap[logId];
+        var taskId = taskLinks[0];
+        if (!lastServiceHoursPerTask.hasOwnProperty(taskId) || machineHours > lastServiceHoursPerTask[taskId]) {
+          lastServiceHoursPerTask[taskId] = machineHours;
+        }
+      });
+    }
+
+    // Now calculate which tasks are due
+    // Machine's registered hours (from Maskiner 2.0)
+    var registeredHours = selectedMachine.fields['Hours'] || 0;
+
+    dueTasks = machineTasks.filter(function(t) {
+      const interval = t.fields['interval'];
+      const cubic = t.fields['Cubic meter'];
+      if (cubic) return true; // always show cubic meter tasks
+      if (!interval) return false;
+
+      // Last time this task was done (in machine hours)
+      var lastDone = lastServiceHoursPerTask.hasOwnProperty(t.id)
+        ? lastServiceHoursPerTask[t.id]
+        : registeredHours; // if never done, use registered hours as baseline
+
+      var hoursSinceLast = currentHours - lastDone;
+      return hoursSinceLast >= interval;
+    });
+
+    renderTasks(currentHours);
+  } catch(e) {
+    document.getElementById('task-list').innerHTML = '<div class="empty">Error loading tasks: ' + e.message + '</div>';
+  }
+}
+
+function renderTasks(currentHours) {
+  const list = document.getElementById('task-list');
+  const info = document.getElementById('tasks-info');
+  list.innerHTML = '';
+  document.getElementById('task-count').textContent = dueTasks.length;
+
+  if (dueTasks.length === 0) {
+    list.innerHTML = '<div class="empty">No tasks due at this hour reading.</div>';
+    document.getElementById('submit-section').style.display = 'none';
+    info.innerHTML = '<div class="info-box">At <strong>' + currentHours + ' hours</strong> — no tasks are due yet.</div>';
+    return;
+  }
+
+  document.getElementById('submit-section').style.display = 'block';
+  info.innerHTML = '<div class="info-box">At <strong>' + currentHours + ' hours</strong> — ' + dueTasks.length + ' task(s) are due. Check off what you complete and add notes where needed.</div>';
+
+  dueTasks.forEach(function(task, i) {
+    const interval = task.fields['interval'];
+    const cubic = task.fields['Cubic meter'];
+    var lastDone = lastServiceHoursPerTask.hasOwnProperty(task.id)
+      ? lastServiceHoursPerTask[task.id]
+      : (selectedMachine.fields['Hours'] || 0);
+    var label = '';
+    if (cubic) label = cubic.toLocaleString() + ' m\u00B3';
+    else if (interval) label = 'Every ' + interval + 'h';
+
+    var lastInfo = cubic ? '' : 'Last done at: ' + lastDone + 'h';
+
+    const div = document.createElement('div');
+    div.className = 'task-item';
+    div.id = 'task-item-' + i;
+    div.innerHTML =
+      '<div class="task-header">' +
+        '<input type="checkbox" class="task-checkbox" id="cb-' + i + '" onchange="onCheck(' + i + ')"/>' +
+        '<label class="task-check-label" for="cb-' + i + '"><span class="checkmark">✓</span></label>' +
+        '<div style="flex:1">' +
+          '<span class="task-name">' + (task.fields['Tasks'] || '(no name)') + '</span>' +
+          (lastInfo ? '<div class="last-info">' + lastInfo + '</div>' : '') +
+        '</div>' +
+        (label ? '<span class="task-meta">' + label + '</span>' : '') +
+      '</div>' +
+      '<div class="task-notes" id="notes-' + i + '">' +
+        '<textarea placeholder="Notes (optional)..." rows="2" id="note-' + i + '"></textarea>' +
+      '</div>';
+    list.appendChild(div);
+  });
+}
+
+function onCheck(i) {
+  const cb = document.getElementById('cb-' + i);
+  const item = document.getElementById('task-item-' + i);
+  const notes = document.getElementById('notes-' + i);
+  // Small delay to let checkbox state update first
+  setTimeout(function() {
+    if (cb.checked) {
+      item.classList.add('done');
+      notes.style.display = 'block';
+    } else {
+      item.classList.remove('done');
+      notes.style.display = 'none';
+    }
+  }, 10);
+}
+
+async function submitLog() {
+  const machine = selectedMachine;
+  const hours = parseFloat(document.getElementById('current-hours').value);
+  const employee = document.getElementById('employee').value.trim();
+
+  if (!machine) { showStatus('Please select a machine.', 'error'); return; }
+  if (isNaN(hours)) { showStatus('Please enter current hours.', 'error'); return; }
+
+  showStatus('Saving service log...', 'loading');
+  document.querySelector('.btn-submit').disabled = true;
+
+  try {
+    // 1. Create servicelogg record
+    const logRecord = await airtablePost(TABLES.servicelog, {
+      records: [{
+        fields: {
+          'Maskiner 2.0': [machine.id],
+          'current hours': hours,
+          'Name': employee,
+          'Date': new Date().toISOString().split('T')[0]
+        }
+      }]
+    });
+    const logId = logRecord.records[0].id;
+
+    // 2. Create servicelogg items
+    const items = dueTasks.map(function(task, i) {
+      return {
+        fields: {
+          'Servicelogg': [logId],
+          'Task': [task.id],
+          'Completed': document.getElementById('cb-' + i) ? document.getElementById('cb-' + i).checked : false,
+          'Notes': document.getElementById('note-' + i) ? document.getElementById('note-' + i).value : '',
+          'Machine hours': hours
+        }
+      };
+    });
+
+    for (var i = 0; i < items.length; i += 10) {
+      await airtablePost(TABLES.items, { records: items.slice(i, i + 10) });
+    }
+
+    // 3. Update machine hours in Maskiner 2.0
+    await airtablePatch(TABLES.machines, machine.id, { 'Hours': hours });
+
+    showStatus('✓ Service log saved!', 'success');
+    document.querySelector('.btn-submit').disabled = false;
+
+    // Update local machine record
+    selectedMachine.fields['Hours'] = hours;
+
+    setTimeout(function() {
+      document.getElementById('machine-select').value = '';
+      document.getElementById('current-hours').value = '';
+      document.getElementById('employee').value = '';
+      selectedMachine = null;
+      lastServiceHoursPerTask = {};
+      hideTasks();
+      document.getElementById('status-msg').style.display = 'none';
+    }, 3000);
+
+  } catch(e) {
+    showStatus('Error saving: ' + e.message, 'error');
+    document.querySelector('.btn-submit').disabled = false;
+  }
+}
+
+function showStatus(msg, type) {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.className = 'status ' + type;
+}
+</script>
+</body>
+</html>
