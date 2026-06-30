@@ -77,16 +77,6 @@
 <div class="container">
 
   <div class="card">
-    <h2>⚙️ Settings</h2>
-    <div class="form-row">
-      <label>Airtable API Token</label>
-      <input type="password" id="api-token" placeholder="pat..." autocomplete="off"/>
-    </div>
-    <button class="btn-primary" onclick="saveSettings()">Save & connect</button>
-    <div class="connected" id="connected-msg">✓ Connected to Airtable</div>
-  </div>
-
-  <div class="card">
     <h2>Machine & Hours</h2>
     <div class="form-row">
       <label>Machine</label>
@@ -136,35 +126,21 @@ let selectedMachine = null;
 let lastServiceHoursPerTask = {}; // taskId -> last machine hours when task was done
 
 document.getElementById('today-date').textContent = new Date().toLocaleDateString('en-GB');
-
-const savedToken = localStorage.getItem('at_token');
-if (savedToken) {
-  token = savedToken;
-  document.getElementById('api-token').value = savedToken;
-  loadMachines();
-}
-
-function saveSettings() {
-  const val = document.getElementById('api-token').value.trim();
-  if (!val) { alert('Please enter your API token.'); return; }
-  token = val;
-  localStorage.setItem('at_token', token);
-  loadMachines();
-}
+loadMachines();
 
 async function airtableFetch(table, params) {
   params = params || '';
-  const url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + table + params;
-  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+  const url = 'https://service-log-proxy.lin-80e.workers.dev/api/' + BASE_ID + '/' + table + params;
+  const res = await fetch(url);
   if (!res.ok) throw new Error('Airtable error: ' + res.status);
   return res.json();
 }
 
 async function airtablePost(table, body) {
-  const url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + table;
+  const url = 'https://service-log-proxy.lin-80e.workers.dev/api/' + BASE_ID + '/' + table;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
   if (!res.ok) throw new Error('Airtable error: ' + res.status);
@@ -172,10 +148,10 @@ async function airtablePost(table, body) {
 }
 
 async function airtablePatch(table, recordId, fields) {
-  const url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + table + '/' + recordId;
+  const url = 'https://service-log-proxy.lin-80e.workers.dev/api/' + BASE_ID + '/' + table + '/' + recordId;
   const res = await fetch(url, {
     method: 'PATCH',
-    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: fields })
   });
   if (!res.ok) throw new Error('Airtable error: ' + res.status);
@@ -194,10 +170,9 @@ async function loadMachines() {
       opt.textContent = m.fields.Name || '(no name)';
       sel.appendChild(opt);
     });
-    document.getElementById('connected-msg').style.display = 'block';
     await loadAllTasks();
   } catch(e) {
-    alert('Could not connect to Airtable. Check your token.');
+    alert('Could not load data. Please check your connection and reload the page.');
   }
 }
 
