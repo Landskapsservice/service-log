@@ -263,6 +263,7 @@ async function loadTasksAndCalculate(currentHours) {
         var taskLinks = item.fields['Task'];
         var logLinks = item.fields['Servicelogg'];
         if (!taskLinks || !logLinks) return;
+        if (item.fields['Completed'] !== true) return; 
         var logId = logLinks[0];
         if (!logHoursMap.hasOwnProperty(logId)) return;
         var machineHours = item.fields['Machine hours'] || logHoursMap[logId];
