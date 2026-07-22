@@ -181,7 +181,7 @@ async function airtablePatch(table, recordId, fields) {
 
 async function loadMachines() {
   try {
-    const data = await airtableFetch(TABLES.machines, '?fields%5B%5D=Name&fields%5B%5D=Hours&fields%5B%5D=No+hour+meter');
+    const data = await airtableFetch(TABLES.machines, '?fields%5B%5D=Name&fields%5B%5D=Hours&fields%5B%5D=No+hour+meter&fields%5B%5D=Last+service+date');
     allMachines = data.records;
     const sel = document.getElementById('machine-select');
     while (sel.options.length > 1) sel.remove(1);
@@ -341,8 +341,13 @@ async function loadTasksAndCalculate(currentHours) {
       } else {
         const intervalType = t.fields['Interval type'];
         if (!intervalType || !INTERVAL_TYPE_DAYS.hasOwnProperty(intervalType)) return false;
-        if (!lastServiceDatePerTask.hasOwnProperty(t.id)) return true; // never done -> due now
-        var daysSince = daysBetween(lastServiceDatePerTask[t.id], todayStr);
+        // Priority: 1) real completion history in the app, 2) machine-level "Last service date" baseline,
+        // 3) no reference at all -> due now
+        var baselineDate = lastServiceDatePerTask.hasOwnProperty(t.id)
+          ? lastServiceDatePerTask[t.id]
+          : selectedMachine.fields['Last service date'];
+        if (!baselineDate) return true;
+        var daysSince = daysBetween(baselineDate, todayStr);
         return daysSince >= INTERVAL_TYPE_DAYS[intervalType];
       }
     });
@@ -388,9 +393,13 @@ function renderTasks(currentHours, tracksHours) {
       lastInfo = 'Last done at: ' + lastDoneHours + 'h';
     } else {
       if (intervalType) label = intervalType;
-      lastInfo = lastServiceDatePerTask.hasOwnProperty(task.id)
-        ? 'Last done: ' + lastServiceDatePerTask[task.id]
-        : 'Never done before';
+      if (lastServiceDatePerTask.hasOwnProperty(task.id)) {
+        lastInfo = 'Last done: ' + lastServiceDatePerTask[task.id];
+      } else if (selectedMachine.fields['Last service date']) {
+        lastInfo = 'Last done: ' + selectedMachine.fields['Last service date'] + ' (machine baseline)';
+      } else {
+        lastInfo = 'Never done before';
+      }
     }
 
     const div = document.createElement('div');
