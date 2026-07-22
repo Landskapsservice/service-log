@@ -85,9 +85,13 @@
       </select>
     </div>
     <div class="form-grid">
-      <div class="form-row">
+      <div class="form-row" id="hours-field">
         <label>Current hours</label>
         <input type="number" id="current-hours" placeholder="e.g. 545" min="0" oninput="onHoursChange()"/>
+      </div>
+      <div class="form-row" id="calendar-note" style="display:none">
+        <label>Schedule type</label>
+        <input type="text" value="Calendar-based (no hour meter)" disabled/>
       </div>
       <div class="form-row">
         <label>Employee</label>
@@ -124,6 +128,23 @@ let allTasks = [];
 let dueTasks = [];
 let selectedMachine = null;
 let lastServiceHoursPerTask = {}; // taskId -> last machine hours when task was done
+let lastServiceDatePerTask = {}; // taskId -> last date (YYYY-MM-DD) when task was done, for calendar-based machines
+
+// How many days each "Interval type" represents
+var INTERVAL_TYPE_DAYS = {
+  'Daily': 1,
+  'Weekly': 7,
+  'Monthly': 30,
+  'Quarterly': 91,
+  'Half year': 182,
+  'Yearly': 365
+};
+
+function daysBetween(dateStrA, dateStrB) {
+  var a = new Date(dateStrA);
+  var b = new Date(dateStrB);
+  return Math.floor((b - a) / 86400000);
+}
 
 document.getElementById('today-date').textContent = new Date().toLocaleDateString('en-GB');
 loadMachines();
@@ -160,7 +181,7 @@ async function airtablePatch(table, recordId, fields) {
 
 async function loadMachines() {
   try {
-    const data = await airtableFetch(TABLES.machines, '?fields%5B%5D=Name&fields%5B%5D=Hours');
+    const data = await airtableFetch(TABLES.machines, '?fields%5B%5D=Name&fields%5B%5D=Hours&fields%5B%5D=No+hour+meter');
     allMachines = data.records;
     const sel = document.getElementById('machine-select');
     while (sel.options.length > 1) sel.remove(1);
@@ -180,7 +201,7 @@ async function loadAllTasks() {
   var all = [];
   var offset = null;
   do {
-    var params = '?fields%5B%5D=Tasks&fields%5B%5D=interval&fields%5B%5D=Cubic+meter&fields%5B%5D=Maskin';
+    var params = '?fields%5B%5D=Tasks&fields%5B%5D=interval&fields%5B%5D=Cubic+meter&fields%5B%5D=Maskin&fields%5B%5D=Interval+type';
     if (offset) params += '&offset=' + offset;
     var data = await airtableFetch(TABLES.tasks, params);
     all = all.concat(data.records);
@@ -189,15 +210,33 @@ async function loadAllTasks() {
   allTasks = all;
 }
 
+function machineTracksHours(machine) {
+  // Default (unchecked/blank) = normal hour-based machine. Only "No hour meter" = true switches it to calendar mode.
+  return !(machine && machine.fields['No hour meter'] === true);
+}
+
 function onMachineChange() {
   const id = document.getElementById('machine-select').value;
   selectedMachine = null;
   lastServiceHoursPerTask = {};
+  lastServiceDatePerTask = {};
   for (var i = 0; i < allMachines.length; i++) {
     if (allMachines[i].id === id) { selectedMachine = allMachines[i]; break; }
   }
   document.getElementById('current-hours').value = '';
   hideTasks();
+  if (!selectedMachine) return;
+
+  if (machineTracksHours(selectedMachine)) {
+    document.getElementById('hours-field').style.display = 'block';
+    document.getElementById('calendar-note').style.display = 'none';
+    // Wait for the employee to type in the current hours (existing behaviour)
+  } else {
+    document.getElementById('hours-field').style.display = 'none';
+    document.getElementById('calendar-note').style.display = 'block';
+    // No hour meter: calculate immediately using today's date
+    loadTasksAndCalculate(null);
+  }
 }
 
 function onHoursChange() {
@@ -232,13 +271,13 @@ async function loadTasksAndCalculate(currentHours) {
 
     // Get all completed service items for this machine, sorted by machine hours desc
     // We fetch servicelogg records for this machine first
-    var logParams = '?fields%5B%5D=current+hours&fields%5B%5D=Maskiner+2.0';
+    var logParams = '?fields%5B%5D=current+hours&fields%5B%5D=Maskiner+2.0&fields%5B%5D=Date';
     var logData = await airtableFetch(TABLES.servicelog, logParams);
     var machineLogIds = [];
     logData.records.forEach(function(r) {
       var linked = r.fields['Maskiner 2.0'];
       if (linked && linked.indexOf(machineId) !== -1) {
-        machineLogIds.push({ id: r.id, hours: r.fields['current hours'] || 0 });
+        machineLogIds.push({ id: r.id, hours: r.fields['current hours'] || 0, date: r.fields['Date'] || null });
       }
     });
 
@@ -254,78 +293,105 @@ async function loadTasksAndCalculate(currentHours) {
         itemOffset = iData.offset || null;
       } while (itemOffset);
 
-      // Build a map of logId -> machine hours
+      // Build maps of logId -> machine hours / date
       var logHoursMap = {};
-      machineLogIds.forEach(function(l) { logHoursMap[l.id] = l.hours; });
+      var logDateMap = {};
+      machineLogIds.forEach(function(l) { logHoursMap[l.id] = l.hours; logDateMap[l.id] = l.date; });
 
-      // For each item, if it belongs to this machine's logs, record the machine hours
+      // For each item, if it belongs to this machine's logs AND was actually completed,
+      // record the machine hours AND the date as the "last done" point for that task.
+      // Items that were shown as due but NOT checked off must NOT reset the clock.
       itemsAll.forEach(function(item) {
         var taskLinks = item.fields['Task'];
         var logLinks = item.fields['Servicelogg'];
         if (!taskLinks || !logLinks) return;
-        if (item.fields['Completed'] !== true) return; 
+        if (item.fields['Completed'] !== true) return; // FIX: only count actually completed tasks
         var logId = logLinks[0];
         if (!logHoursMap.hasOwnProperty(logId)) return;
         var machineHours = item.fields['Machine hours'] || logHoursMap[logId];
+        var machineDate = logDateMap[logId];
         var taskId = taskLinks[0];
         if (!lastServiceHoursPerTask.hasOwnProperty(taskId) || machineHours > lastServiceHoursPerTask[taskId]) {
           lastServiceHoursPerTask[taskId] = machineHours;
+        }
+        if (machineDate && (!lastServiceDatePerTask.hasOwnProperty(taskId) || machineDate > lastServiceDatePerTask[taskId])) {
+          lastServiceDatePerTask[taskId] = machineDate;
         }
       });
     }
 
     // Now calculate which tasks are due
-    // Machine's registered hours (from Maskiner 2.0)
+    var tracksHours = machineTracksHours(selectedMachine);
     var registeredHours = selectedMachine.fields['Hours'] || 0;
+    var todayStr = new Date().toISOString().split('T')[0];
 
     dueTasks = machineTasks.filter(function(t) {
-      const interval = t.fields['interval'];
       const cubic = t.fields['Cubic meter'];
       if (cubic) return true; // always show cubic meter tasks
-      if (!interval) return false;
 
-      // Last time this task was done (in machine hours)
-      var lastDone = lastServiceHoursPerTask.hasOwnProperty(t.id)
-        ? lastServiceHoursPerTask[t.id]
-        : registeredHours; // if never done, use registered hours as baseline
-
-      var hoursSinceLast = currentHours - lastDone;
-      return hoursSinceLast >= interval;
+      if (tracksHours) {
+        const interval = t.fields['interval'];
+        if (!interval) return false;
+        // Last time this task was done (in machine hours)
+        var lastDone = lastServiceHoursPerTask.hasOwnProperty(t.id)
+          ? lastServiceHoursPerTask[t.id]
+          : registeredHours; // if never done, use registered hours as baseline
+        var hoursSinceLast = currentHours - lastDone;
+        return hoursSinceLast >= interval;
+      } else {
+        const intervalType = t.fields['Interval type'];
+        if (!intervalType || !INTERVAL_TYPE_DAYS.hasOwnProperty(intervalType)) return false;
+        if (!lastServiceDatePerTask.hasOwnProperty(t.id)) return true; // never done -> due now
+        var daysSince = daysBetween(lastServiceDatePerTask[t.id], todayStr);
+        return daysSince >= INTERVAL_TYPE_DAYS[intervalType];
+      }
     });
 
-    renderTasks(currentHours);
+    renderTasks(currentHours, tracksHours);
   } catch(e) {
     document.getElementById('task-list').innerHTML = '<div class="empty">Error loading tasks: ' + e.message + '</div>';
   }
 }
 
-function renderTasks(currentHours) {
+function renderTasks(currentHours, tracksHours) {
   const list = document.getElementById('task-list');
   const info = document.getElementById('tasks-info');
   list.innerHTML = '';
   document.getElementById('task-count').textContent = dueTasks.length;
 
+  var contextLabel = tracksHours ? ('At <strong>' + currentHours + ' hours</strong>') : 'Based on <strong>today\'s date</strong> (calendar schedule)';
+
   if (dueTasks.length === 0) {
-    list.innerHTML = '<div class="empty">No tasks due at this hour reading.</div>';
+    list.innerHTML = '<div class="empty">No tasks due right now.</div>';
     document.getElementById('submit-section').style.display = 'none';
-    info.innerHTML = '<div class="info-box">At <strong>' + currentHours + ' hours</strong> — no tasks are due yet.</div>';
+    info.innerHTML = '<div class="info-box">' + contextLabel + ' — no tasks are due yet.</div>';
     return;
   }
 
   document.getElementById('submit-section').style.display = 'block';
-  info.innerHTML = '<div class="info-box">At <strong>' + currentHours + ' hours</strong> — ' + dueTasks.length + ' task(s) are due. Check off what you complete and add notes where needed.</div>';
+  info.innerHTML = '<div class="info-box">' + contextLabel + ' — ' + dueTasks.length + ' task(s) are due. Check off what you complete and add notes where needed.</div>';
 
   dueTasks.forEach(function(task, i) {
     const interval = task.fields['interval'];
+    const intervalType = task.fields['Interval type'];
     const cubic = task.fields['Cubic meter'];
-    var lastDone = lastServiceHoursPerTask.hasOwnProperty(task.id)
-      ? lastServiceHoursPerTask[task.id]
-      : (selectedMachine.fields['Hours'] || 0);
     var label = '';
-    if (cubic) label = cubic.toLocaleString() + ' m\u00B3';
-    else if (interval) label = 'Every ' + interval + 'h';
+    var lastInfo = '';
 
-    var lastInfo = cubic ? '' : 'Last done at: ' + lastDone + 'h';
+    if (cubic) {
+      label = cubic.toLocaleString() + ' m\u00B3';
+    } else if (tracksHours) {
+      var lastDoneHours = lastServiceHoursPerTask.hasOwnProperty(task.id)
+        ? lastServiceHoursPerTask[task.id]
+        : (selectedMachine.fields['Hours'] || 0);
+      if (interval) label = 'Every ' + interval + 'h';
+      lastInfo = 'Last done at: ' + lastDoneHours + 'h';
+    } else {
+      if (intervalType) label = intervalType;
+      lastInfo = lastServiceDatePerTask.hasOwnProperty(task.id)
+        ? 'Last done: ' + lastServiceDatePerTask[task.id]
+        : 'Never done before';
+    }
 
     const div = document.createElement('div');
     div.className = 'task-item';
@@ -365,61 +431,64 @@ function onCheck(i) {
 
 async function submitLog() {
   const machine = selectedMachine;
+  const tracksHours = machineTracksHours(machine);
   const hours = parseFloat(document.getElementById('current-hours').value);
   const employee = document.getElementById('employee').value.trim();
 
   if (!machine) { showStatus('Please select a machine.', 'error'); return; }
-  if (isNaN(hours)) { showStatus('Please enter current hours.', 'error'); return; }
+  if (tracksHours && isNaN(hours)) { showStatus('Please enter current hours.', 'error'); return; }
 
   showStatus('Saving service log...', 'loading');
   document.querySelector('.btn-submit').disabled = true;
 
   try {
     // 1. Create servicelogg record
+    var logFields = {
+      'Maskiner 2.0': [machine.id],
+      'Name': employee,
+      'Date': new Date().toISOString().split('T')[0]
+    };
+    if (tracksHours) logFields['current hours'] = hours;
+
     const logRecord = await airtablePost(TABLES.servicelog, {
-      records: [{
-        fields: {
-          'Maskiner 2.0': [machine.id],
-          'current hours': hours,
-          'Name': employee,
-          'Date': new Date().toISOString().split('T')[0]
-        }
-      }]
+      records: [{ fields: logFields }]
     });
     const logId = logRecord.records[0].id;
 
     // 2. Create servicelogg items
     const items = dueTasks.map(function(task, i) {
-      return {
-        fields: {
-          'Servicelogg': [logId],
-          'Task': [task.id],
-          'Completed': document.getElementById('cb-' + i) ? document.getElementById('cb-' + i).checked : false,
-          'Notes': document.getElementById('note-' + i) ? document.getElementById('note-' + i).value : '',
-          'Machine hours': hours
-        }
+      var itemFields = {
+        'Servicelogg': [logId],
+        'Task': [task.id],
+        'Completed': document.getElementById('cb-' + i) ? document.getElementById('cb-' + i).checked : false,
+        'Notes': document.getElementById('note-' + i) ? document.getElementById('note-' + i).value : ''
       };
+      if (tracksHours) itemFields['Machine hours'] = hours;
+      return { fields: itemFields };
     });
 
     for (var i = 0; i < items.length; i += 10) {
       await airtablePost(TABLES.items, { records: items.slice(i, i + 10) });
     }
 
-    // 3. Update machine hours in Maskiner 2.0
-    await airtablePatch(TABLES.machines, machine.id, { 'Hours': hours });
+    // 3. Update machine hours in Maskiner 2.0 (only relevant for hour-tracked machines)
+    if (tracksHours) {
+      await airtablePatch(TABLES.machines, machine.id, { 'Hours': hours });
+      selectedMachine.fields['Hours'] = hours;
+    }
 
     showStatus('✓ Service log saved!', 'success');
     document.querySelector('.btn-submit').disabled = false;
-
-    // Update local machine record
-    selectedMachine.fields['Hours'] = hours;
 
     setTimeout(function() {
       document.getElementById('machine-select').value = '';
       document.getElementById('current-hours').value = '';
       document.getElementById('employee').value = '';
+      document.getElementById('hours-field').style.display = 'block';
+      document.getElementById('calendar-note').style.display = 'none';
       selectedMachine = null;
       lastServiceHoursPerTask = {};
+      lastServiceDatePerTask = {};
       hideTasks();
       document.getElementById('status-msg').style.display = 'none';
     }, 3000);
